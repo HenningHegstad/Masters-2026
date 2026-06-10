@@ -69,9 +69,10 @@ class Config:
     T_snap: float = 1.0
     T_test: float = 1.0
     error_sample_start_time: float = 0.0
+    error_integration_order: int = 12
     Sstor: float = 1.0
     p_init: float = 0.0
-    stationary_mode: bool = False
+    stationary_mode: bool = True
 
     # permeability
     k0: float = 1.0
@@ -95,8 +96,8 @@ class Config:
     rng_seed: int = 0
     muu_ridge: float = 0
     # ROM options
-    P_list: Tuple[int, ...] = (5,)#(0,1,2,3,4,5,6,7,8,9)
-    tau_list: Tuple[float, ...] = (1e-3,1e-4)#(1e-2,1e-3,1e-4)
+    P_list: Tuple[int, ...] = (9,)#(0,1,2,3,4,5,6,7,8,9)
+    tau_list: Tuple[float, ...] = (1e-2,1e-3)#(1e-2,1e-3,1e-4)
 
     # snapshot downsampling
     store_every: int = 1
@@ -424,17 +425,19 @@ def compute_history_solution_error_sums(
         u_fom = hu_fom[n, :]
         p_fom = hp_fom[n, :]
 
-        eu_l2 = abs_L2_error_vector(u_fit, u_fom, V, mesh)
-        nu_l2 = L2_norm_vector_on_mesh(u_fom, V, mesh)
+        int_order = int(cfg.error_integration_order)
 
-        ep_l2 = abs_L2_error_scalar(p_fit, p_fom, Q, mesh)
-        np_l2 = L2_norm_scalar_on_mesh(p_fom, Q, mesh)
+        eu_l2 = abs_L2_error_vector(u_fit, u_fom, V, mesh, order=int_order)
+        nu_l2 = L2_norm_vector_on_mesh(u_fom, V, mesh, order=int_order)
 
-        eu_hdiv = abs_Hdiv_error_vector(u_fit, u_fom, V, mesh)
-        nu_hdiv = Hdiv_norm_vector_on_mesh(u_fom, V, mesh)
+        ep_l2 = abs_L2_error_scalar(p_fit, p_fom, Q, mesh, order=int_order)
+        np_l2 = L2_norm_scalar_on_mesh(p_fom, Q, mesh, order=int_order)
 
-        eu_khdiv = abs_KHdiv_error_vector(u_fit, u_fom, V, mesh, Kinv_cf)
-        nu_khdiv = KHdiv_norm_vector_on_mesh(u_fom, V, mesh, Kinv_cf)
+        eu_hdiv = abs_Hdiv_error_vector(u_fit, u_fom, V, mesh, order=int_order)
+        nu_hdiv = Hdiv_norm_vector_on_mesh(u_fom, V, mesh, order=int_order)
+
+        eu_khdiv = abs_KHdiv_error_vector(u_fit, u_fom, V, mesh, Kinv_cf, order=int_order)
+        nu_khdiv = KHdiv_norm_vector_on_mesh(u_fom, V, mesh, Kinv_cf, order=int_order)
 
         ru_l2 = eu_l2 / max(nu_l2, eps)
         rp_l2 = ep_l2 / max(np_l2, eps)
@@ -2231,93 +2234,93 @@ def online_rollout_transient_ROM_CoSTA_shared(model_c, mu, nsteps, p0=0.0):
 # ============================================================
 # Norms / errors
 # ============================================================
-def L2_norm_scalar_on_mesh(p_vec, Qspace, mesh):
+def L2_norm_scalar_on_mesh(p_vec, Qspace, mesh, order=5):
     g = GridFunction(Qspace)
     g.vec.FV().NumPy()[:] = p_vec
-    return float(sqrt(Integrate(g * g, mesh)))
+    return float(sqrt(Integrate(g * g, mesh, order=int(order))))
 
 
-def L2_norm_vector_on_mesh(u_vec, Vspace, mesh):
+def L2_norm_vector_on_mesh(u_vec, Vspace, mesh, order=5):
     g = GridFunction(Vspace)
     g.vec.FV().NumPy()[:] = u_vec
-    return float(sqrt(Integrate(InnerProduct(g, g), mesh)))
+    return float(sqrt(Integrate(InnerProduct(g, g), mesh, order=int(order))))
 
 
-def abs_L2_error_scalar(p_rb, p_fom, Qspace, mesh):
+def abs_L2_error_scalar(p_rb, p_fom, Qspace, mesh, order=5):
     g1 = GridFunction(Qspace)
     g1.vec.FV().NumPy()[:] = p_rb
     g2 = GridFunction(Qspace)
     g2.vec.FV().NumPy()[:] = p_fom
     diff = g2 - g1
-    return float(sqrt(Integrate(diff * diff, mesh)))
+    return float(sqrt(Integrate(diff * diff, mesh, order=int(order))))
 
 
-def abs_L2_error_vector(u_rb, u_fom, Vspace, mesh):
+def abs_L2_error_vector(u_rb, u_fom, Vspace, mesh, order=5):
     g1 = GridFunction(Vspace)
     g1.vec.FV().NumPy()[:] = u_rb
     g2 = GridFunction(Vspace)
     g2.vec.FV().NumPy()[:] = u_fom
     diff = g2 - g1
-    return float(sqrt(Integrate(InnerProduct(diff, diff), mesh)))
+    return float(sqrt(Integrate(InnerProduct(diff, diff), mesh, order=int(order))))
 
 
-def rel_L2_error_scalar(p_rb, p_fom, Qspace, mesh, eps=1e-14):
-    num = abs_L2_error_scalar(p_rb, p_fom, Qspace, mesh)
-    den = L2_norm_scalar_on_mesh(p_fom, Qspace, mesh)
+def rel_L2_error_scalar(p_rb, p_fom, Qspace, mesh, eps=1e-14, order=5):
+    num = abs_L2_error_scalar(p_rb, p_fom, Qspace, mesh, order=order)
+    den = L2_norm_scalar_on_mesh(p_fom, Qspace, mesh, order=order)
     return num / max(den, eps)
 
 
-def rel_L2_error_vector(u_rb, u_fom, Vspace, mesh, eps=1e-14):
-    num = abs_L2_error_vector(u_rb, u_fom, Vspace, mesh)
-    den = L2_norm_vector_on_mesh(u_fom, Vspace, mesh)
+def rel_L2_error_vector(u_rb, u_fom, Vspace, mesh, eps=1e-14, order=5):
+    num = abs_L2_error_vector(u_rb, u_fom, Vspace, mesh, order=order)
+    den = L2_norm_vector_on_mesh(u_fom, Vspace, mesh, order=order)
     return num / max(den, eps)
 
 
-def Hdiv_norm_vector_on_mesh(u_vec, Vspace, mesh):
+def Hdiv_norm_vector_on_mesh(u_vec, Vspace, mesh, order=5):
     g = GridFunction(Vspace)
     g.vec.FV().NumPy()[:] = u_vec
-    val = Integrate(InnerProduct(g, g) + div(g) * div(g), mesh)
+    val = Integrate(InnerProduct(g, g) + div(g) * div(g), mesh, order=int(order))
     return float(sqrt(val))
 
 
-def abs_Hdiv_error_vector(u_rb, u_fom, Vspace, mesh):
+def abs_Hdiv_error_vector(u_rb, u_fom, Vspace, mesh, order=5):
     g1 = GridFunction(Vspace)
     g1.vec.FV().NumPy()[:] = u_rb
     g2 = GridFunction(Vspace)
     g2.vec.FV().NumPy()[:] = u_fom
     diff_val = g2 - g1
     diff_div = div(g2) - div(g1)
-    val = Integrate(InnerProduct(diff_val, diff_val) + diff_div * diff_div, mesh)
+    val = Integrate(InnerProduct(diff_val, diff_val) + diff_div * diff_div, mesh, order=int(order))
     return float(sqrt(val))
 
 
-def rel_Hdiv_error_vector(u_rb, u_fom, Vspace, mesh, eps=1e-14):
-    num = abs_Hdiv_error_vector(u_rb, u_fom, Vspace, mesh)
-    den = Hdiv_norm_vector_on_mesh(u_fom, Vspace, mesh)
+def rel_Hdiv_error_vector(u_rb, u_fom, Vspace, mesh, eps=1e-14, order=5):
+    num = abs_Hdiv_error_vector(u_rb, u_fom, Vspace, mesh, order=order)
+    den = Hdiv_norm_vector_on_mesh(u_fom, Vspace, mesh, order=order)
     return num / max(den, eps)
 
 
-def KHdiv_norm_vector_on_mesh(u_vec, Vspace, mesh, Kinv_cf):
+def KHdiv_norm_vector_on_mesh(u_vec, Vspace, mesh, Kinv_cf, order=5):
     g = GridFunction(Vspace)
     g.vec.FV().NumPy()[:] = u_vec
-    val = Integrate(Kinv_cf * InnerProduct(g, g) + div(g) * div(g), mesh)
+    val = Integrate(Kinv_cf * InnerProduct(g, g) + div(g) * div(g), mesh, order=int(order))
     return float(sqrt(val))
 
 
-def abs_KHdiv_error_vector(u_rb, u_fom, Vspace, mesh, Kinv_cf):
+def abs_KHdiv_error_vector(u_rb, u_fom, Vspace, mesh, Kinv_cf, order=5):
     g1 = GridFunction(Vspace)
     g1.vec.FV().NumPy()[:] = u_rb
     g2 = GridFunction(Vspace)
     g2.vec.FV().NumPy()[:] = u_fom
     diff_val = g2 - g1
     diff_div = div(g2) - div(g1)
-    val = Integrate(Kinv_cf * InnerProduct(diff_val, diff_val) + diff_div * diff_div, mesh)
+    val = Integrate(Kinv_cf * InnerProduct(diff_val, diff_val) + diff_div * diff_div, mesh, order=int(order))
     return float(sqrt(val))
 
 
-def rel_KHdiv_error_vector(u_rb, u_fom, Vspace, mesh, Kinv_cf, eps=1e-14):
-    num = abs_KHdiv_error_vector(u_rb, u_fom, Vspace, mesh, Kinv_cf)
-    den = KHdiv_norm_vector_on_mesh(u_fom, Vspace, mesh, Kinv_cf)
+def rel_KHdiv_error_vector(u_rb, u_fom, Vspace, mesh, Kinv_cf, eps=1e-14, order=5):
+    num = abs_KHdiv_error_vector(u_rb, u_fom, Vspace, mesh, Kinv_cf, order=order)
+    den = KHdiv_norm_vector_on_mesh(u_fom, Vspace, mesh, Kinv_cf, order=order)
     return num / max(den, eps)
 
 # ============================================================
@@ -2341,6 +2344,7 @@ def online_time_metrics_both_full(mesh, V, Q, Y, cfg: Config, f_base, model, mod
 
     K_cf = permeability_cf(mu, cfg)
     Kinv_cf = 1.0 / K_cf
+    int_order = int(cfg.error_integration_order)
 
     metrics = {}
 
@@ -2369,10 +2373,10 @@ def online_time_metrics_both_full(mesh, V, Q, Y, cfg: Config, f_base, model, mod
     max_u_hdiv_ref = 0.0
     max_u_khdiv_ref = 0.0
     for n in range(nsteps):
-        n_u_l2 = L2_norm_vector_on_mesh(hu[n, :], V, mesh)
-        n_p_l2 = L2_norm_scalar_on_mesh(hp[n, :], Q, mesh)
-        n_u_hdiv = Hdiv_norm_vector_on_mesh(hu[n, :], V, mesh)
-        n_u_khdiv = KHdiv_norm_vector_on_mesh(hu[n, :], V, mesh, Kinv_cf)
+        n_u_l2 = L2_norm_vector_on_mesh(hu[n, :], V, mesh, order=int_order)
+        n_p_l2 = L2_norm_scalar_on_mesh(hp[n, :], Q, mesh, order=int_order)
+        n_u_hdiv = Hdiv_norm_vector_on_mesh(hu[n, :], V, mesh, order=int_order)
+        n_u_khdiv = KHdiv_norm_vector_on_mesh(hu[n, :], V, mesh, Kinv_cf, order=int_order)
 
         u_l2_ref[n] = n_u_l2
         p_l2_ref[n] = n_p_l2
@@ -2402,16 +2406,16 @@ def online_time_metrics_both_full(mesh, V, Q, Y, cfg: Config, f_base, model, mod
         uc = model_c["V_u_stab"] @ zc[:r_u]
         pc = model_c["V_p"] @ zc[r_u:]
 
-        bu_l2_abs = abs_L2_error_vector(ub, u_fom, V, mesh)
-        cu_l2_abs = abs_L2_error_vector(uc, u_fom, V, mesh)
-        bp_l2_abs = abs_L2_error_scalar(pb, p_fom, Q, mesh)
-        cp_l2_abs = abs_L2_error_scalar(pc, p_fom, Q, mesh)
+        bu_l2_abs = abs_L2_error_vector(ub, u_fom, V, mesh, order=int_order)
+        cu_l2_abs = abs_L2_error_vector(uc, u_fom, V, mesh, order=int_order)
+        bp_l2_abs = abs_L2_error_scalar(pb, p_fom, Q, mesh, order=int_order)
+        cp_l2_abs = abs_L2_error_scalar(pc, p_fom, Q, mesh, order=int_order)
 
-        bu_hdiv_abs = abs_Hdiv_error_vector(ub, u_fom, V, mesh)
-        cu_hdiv_abs = abs_Hdiv_error_vector(uc, u_fom, V, mesh)
+        bu_hdiv_abs = abs_Hdiv_error_vector(ub, u_fom, V, mesh, order=int_order)
+        cu_hdiv_abs = abs_Hdiv_error_vector(uc, u_fom, V, mesh, order=int_order)
 
-        bu_khdiv_abs = abs_KHdiv_error_vector(ub, u_fom, V, mesh, Kinv_cf)
-        cu_khdiv_abs = abs_KHdiv_error_vector(uc, u_fom, V, mesh, Kinv_cf)
+        bu_khdiv_abs = abs_KHdiv_error_vector(ub, u_fom, V, mesh, Kinv_cf, order=int_order)
+        cu_khdiv_abs = abs_KHdiv_error_vector(uc, u_fom, V, mesh, Kinv_cf, order=int_order)
 
         metrics["baseline_u_l2_abs"][n] = bu_l2_abs
         metrics["costa_u_l2_abs"][n] = cu_l2_abs
@@ -3198,10 +3202,10 @@ def _draw_pressure_panel_grid(
     row_keys = ["fom", "rom", "rom_diff", "costa", "costa_diff"]
     row_titles = [
         f"FOM ({int(fom_dofs)} DoFs)",
-        f"ROM (r={int(rom_r_tot)})",
-        "ROM - FOM",
-        f"CoSTA (r={int(costa_r_tot)})",
-        "CoSTA - FOM",
+        f"ROM ($r={int(rom_r_tot)}$)",
+        "ROM $-$ FOM",
+        f"CoSTA-ROM ($r={int(costa_r_tot)}$)",
+        "CoSTA-ROM $-$ FOM",
     ]
     nrows = len(row_keys)
     ncols = len(times_used)
@@ -3310,10 +3314,10 @@ def _draw_velocity_panel_grid(
     row_keys = ["fom", "rom", "rom_diff", "costa", "costa_diff"]
     row_titles = [
         f"FOM ({int(fom_dofs)} DoFs)",
-        f"ROM (r={int(rom_r_tot)})",
-        "ROM - FOM",
-        f"CoSTA (r={int(costa_r_tot)})",
-        "CoSTA - FOM",
+        f"ROM ($r={int(rom_r_tot)}$)",
+        "ROM $-$ FOM",
+        f"CoSTA-ROM ($r={int(costa_r_tot)}$)",
+        "CoSTA-ROM $-$ FOM",
     ]
     nrows = len(row_keys)
     ncols = len(times_used)
@@ -3455,7 +3459,7 @@ def _draw_stationary_pressure_two_tau(
         bottom=0.06,
         top=0.975,
         hspace=0.14,
-        wspace=0.16,
+        wspace=0.5,
     )
     title_fs = 11
 
@@ -3550,35 +3554,35 @@ def _draw_stationary_pressure_two_tau(
     _set_bottom_title(ax_fem, f"FOM solution ({int(fom_dofs)} DoFs)")
     _set_bottom_title(
         ax_rom_1,
-        rf"ROM solution, r={rows[0]['r_tot']}, P={int(P_plot)}",
+        rf"ROM solution, $r={rows[0]['r_tot']}, P={int(P_plot)}$",
     )
     _set_bottom_title(
         ax_rom_2,
-        rf"ROM solution, r={rows[1]['r_tot']}, P={int(P_plot)}",
+        rf"ROM solution, $r={rows[1]['r_tot']}, P={int(P_plot)}$",
     )
     _set_bottom_title(
         ax_diff_1,
-        rf"ROM-FOM difference, r={rows[0]['r_tot']}, P={int(P_plot)}",
+        rf"ROM $-$ FOM difference, $r={rows[0]['r_tot']}, P={int(P_plot)}$",
     )
     _set_bottom_title(
         ax_diff_2,
-        rf"ROM-FOM difference, r={rows[1]['r_tot']}, P={int(P_plot)}",
+        rf"ROM $-$ FOM difference, $r={rows[1]['r_tot']}, P={int(P_plot)}$",
     )
     _set_bottom_title(
         ax_costa_1,
-        rf"CoSTA solution, r={rows[0]['r_tot_costa']}, P={int(P_plot)}",
+        rf"CoSTA-ROM solution, $r={rows[0]['r_tot_costa']}, P={int(P_plot)}$",
     )
     _set_bottom_title(
         ax_costa_2,
-        rf"CoSTA solution, r={rows[1]['r_tot_costa']}, P={int(P_plot)}",
+        rf"CoSTA-ROM solution, $r={rows[1]['r_tot_costa']}, P={int(P_plot)}$",
     )
     _set_bottom_title(
         ax_cdiff_1,
-        rf"CoSTA-FOM difference, r={rows[0]['r_tot_costa']}, P={int(P_plot)}",
+        rf"CoSTA-ROM $-$ FOM difference, $r={rows[0]['r_tot_costa']}, P={int(P_plot)}$",
     )
     _set_bottom_title(
         ax_cdiff_2,
-        rf"CoSTA-FOM difference, r={rows[1]['r_tot_costa']}, P={int(P_plot)}",
+        rf"CoSTA-ROM $-$ FOM difference, $r={rows[1]['r_tot_costa']}, P={int(P_plot)}$",
     )
 
     for ax in [ax_fem, ax_rom_1, ax_rom_2, ax_diff_1, ax_diff_2, ax_costa_1, ax_costa_2, ax_cdiff_1, ax_cdiff_2]:
@@ -3675,7 +3679,7 @@ def _draw_stationary_velocity_two_tau(
         bottom=0.06,
         top=0.975,
         hspace=0.14,
-        wspace=0.16,
+        wspace=0.5,
     )
     title_fs = 11
 
@@ -3775,35 +3779,35 @@ def _draw_stationary_velocity_two_tau(
     _set_bottom_title(ax_fem, f"FOM solution ({int(fom_dofs)} DoFs)")
     _set_bottom_title(
         ax_rom_1,
-        rf"ROM solution, r={rows[0]['r_tot']}, P={int(P_plot)}",
+        rf"ROM solution, $r={rows[0]['r_tot']}, P={int(P_plot)}$",
     )
     _set_bottom_title(
         ax_rom_2,
-        rf"ROM solution, r={rows[1]['r_tot']}, P={int(P_plot)}",
+        rf"ROM solution, $r={rows[1]['r_tot']}, P={int(P_plot)}$",
     )
     _set_bottom_title(
         ax_diff_1,
-        rf"ROM-FOM difference, r={rows[0]['r_tot']}, P={int(P_plot)}",
+        rf"ROM $-$ FOM difference, $r={rows[0]['r_tot']}, P={int(P_plot)}$",
     )
     _set_bottom_title(
         ax_diff_2,
-        rf"ROM-FOM difference, r={rows[1]['r_tot']}, P={int(P_plot)}",
+        rf"ROM $-$ FOM difference, $r={rows[1]['r_tot']}, P={int(P_plot)}$",
     )
     _set_bottom_title(
         ax_costa_1,
-        rf"CoSTA solution, r={rows[0]['r_tot_costa']}, P={int(P_plot)}",
+        rf"CoSTA-ROM solution, $r={rows[0]['r_tot_costa']}, P={int(P_plot)}$",
     )
     _set_bottom_title(
         ax_costa_2,
-        rf"CoSTA solution, r={rows[1]['r_tot_costa']}, P={int(P_plot)}",
+        rf"CoSTA-ROM solution, $r={rows[1]['r_tot_costa']}, P={int(P_plot)}$",
     )
     _set_bottom_title(
         ax_cdiff_1,
-        rf"CoSTA-FOM difference, r={rows[0]['r_tot_costa']}, P={int(P_plot)}",
+        rf"CoSTA-ROM $-$ FOM difference, $r={rows[0]['r_tot_costa']}, P={int(P_plot)}$",
     )
     _set_bottom_title(
         ax_cdiff_2,
-        rf"CoSTA-FOM difference, r={rows[1]['r_tot_costa']}, P={int(P_plot)}",
+        rf"CoSTA-ROM $-$ FOM difference, $r={rows[1]['r_tot_costa']}, P={int(P_plot)}$",
     )
 
     for ax in [ax_fem, ax_rom_1, ax_rom_2, ax_diff_1, ax_diff_2, ax_costa_1, ax_costa_2, ax_cdiff_1, ax_cdiff_2]:
@@ -4145,6 +4149,7 @@ def main():
     parser.add_argument("--maxh", type=float, default=None)
     parser.add_argument("--store_every", type=int, default=None)
     parser.add_argument("--error_sample_start_time", type=float, default=None)
+    parser.add_argument("--error_integration_order", type=int, default=None)
     parser.add_argument("--Nsplit", type=int, default=None)
     parser.add_argument("--muu_ridge", type=float, default=None)
     parser.add_argument("--costa_mode", type=str, default=None, choices=["dnn", "ridge"])
@@ -4183,6 +4188,8 @@ def main():
         cfg.store_every = int(args.store_every)
     if args.error_sample_start_time is not None:
         cfg.error_sample_start_time = float(args.error_sample_start_time)
+    if args.error_integration_order is not None:
+        cfg.error_integration_order = int(args.error_integration_order)
     if args.Nsplit is not None:
         cfg.Nsplit = int(args.Nsplit)
     if args.muu_ridge is not None:
@@ -4213,6 +4220,9 @@ def main():
         cfg.pod_mode = "snap_weights"
     else:
         raise ValueError(f"Unknown norm_mode={cfg.norm_mode!r}")
+
+    if int(cfg.error_integration_order) < 1:
+        raise ValueError(f"error_integration_order must be >= 1, got {cfg.error_integration_order}")
 
     if args.debug_use_exact_muu_in_direct_fit_solver:
         cfg.debug_use_exact_muu_in_direct_fit_solver = True
@@ -4251,7 +4261,8 @@ def main():
             tau_tag_b = f"{plot_tau_pair[1]:.3e}".replace("+", "").replace("-", "m").replace(".", "p")
             plot_pdf_base = os.path.join(
                 cfg.out_dir,
-                f"solutions_{cfg.tag}_stationary_P{plot_P}_tau{tau_tag_a}_tau{tau_tag_b}",
+                # f"solutions_{cfg.tag}_stationary_P{plot_P}_tau{tau_tag_a}_tau{tau_tag_b}",
+                f"rom_costa_solution_compare_stationary",
             )
         else:
             tau_tag = f"{plot_tau:.3e}".replace("+", "").replace("-", "m").replace(".", "p")
@@ -4269,6 +4280,7 @@ def main():
         f"store_every={cfg.store_every}, pod_mode={cfg.pod_mode}, "
         f"costa_mode={cfg.costa_mode}, costa_ridge={cfg.costa_ridge}, "
         f"error_sample_start_time={cfg.error_sample_start_time}, "
+        f"error_integration_order={cfg.error_integration_order}, "
         f"compute_muu_l2fit_errors={cfg.compute_muu_l2fit_errors}, "
         f"l2fit_quad_n_1d={cfg.l2fit_quad_n_1d}, "
         f"stationary_mode={cfg.stationary_mode}, "
